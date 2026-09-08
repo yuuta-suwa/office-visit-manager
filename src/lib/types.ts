@@ -15,6 +15,24 @@ export type OfficeCalendarSummary = {
   has_unlock: boolean;
 };
 
+export type EventItem = {
+  id: string;
+  title: string;
+  starts_at: string;
+  ends_at: string;
+  office_required: boolean;
+  zoom_allowed: boolean;
+  description: string;
+};
+
+export type EventResponse = {
+  event_id: string;
+  participation_type: "office" | "zoom" | "absent";
+  planned_arrival: string | null;
+  planned_departure: string | null;
+  attendance_confirmed: boolean;
+};
+
 export type OfficeStatus = {
   singleton_id: number;
   is_open: boolean;
