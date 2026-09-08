@@ -41,7 +41,7 @@ export default function Dashboard({ currentUser, email }: { currentUser: Profile
           <div className="col-8"><TodayVisitors /></div>
           <div className="col-6"><ReservationManager currentUser={currentUser} /></div>
           <div className="col-6"><OpenCloseLogs /></div>
-          <div className="col-12"><EventManager /></div>
+          <div className="col-12"><EventManager currentUser={currentUser} /></div>
         </div>
       )}
     </main>
