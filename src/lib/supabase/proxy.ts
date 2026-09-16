@@ -1,7 +1,14 @@
+import { getSupabaseConfigError } from "./config";
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function updateSession(request: NextRequest) {
+  if (getSupabaseConfigError()) {
+    if (request.nextUrl.pathname === "/login") return NextResponse.next();
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    return NextResponse.redirect(url);
+  }
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(

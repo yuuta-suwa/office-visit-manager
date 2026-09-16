@@ -2,10 +2,11 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import { getSupabaseConfigError } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
-  const supabase = createClient();
+  const configError = getSupabaseConfigError();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -14,16 +15,22 @@ export default function LoginPage() {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (configError) return;
     setBusy(true);
     setMessage("");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    try {
+    const { error } = await createClient().auth.signInWithPassword({ email, password });
     if (error) {
       setMessage(error.message);
     } else {
       router.replace("/");
       router.refresh();
     }
-    setBusy(false);
+    } catch {
+      setMessage("接続できませんでした。接続設定とネットワークを確認してください。");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -40,8 +47,9 @@ export default function LoginPage() {
             <label>パスワード</label>
             <input type="password" minLength={8} value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required />
           </div>
+          {configError && <div className="error" role="alert">{configError}</div>}
           {message && <div className="error">{message}</div>}
-          <button className="btn btn-primary" disabled={busy}>{busy ? "認証中…" : "ログイン"}</button>
+          <button className="btn btn-primary" disabled={busy || !!configError}>{busy ? "認証中…" : "ログイン"}</button>
         </form>
         <p className="muted" style={{marginTop:16}}>アカウント追加は管理者がSupabase Authenticationから行います。公開サインアップは使用しません。</p>
       </section>
