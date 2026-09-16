@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { maxReservationDate, shortTime, tokyoDateString } from "@/lib/date";
 import type { Profile, Reservation } from "@/lib/types";
 
-const empty = () => ({ visit_date: tokyoDateString(), start_time: "09:00", end_time: "10:00", note: "" });
+const empty = () => ({ visit_date: tokyoDateString(), start_time: "09:00", end_time: "10:00", note: "", reason: "" });
 
 export default function ReservationManager({ currentUser }: { currentUser: Profile }) {
   const supabase = createClient();
@@ -15,9 +15,11 @@ export default function ReservationManager({ currentUser }: { currentUser: Profi
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [cancelingId, setCancelingId] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
 
   const load = useCallback(async () => {
-    const { data, error } = await supabase.from("reservations").select("*").eq("user_id", currentUser.id).gte("visit_date", tokyoDateString()).order("visit_date").order("start_time");
+    const { data, error } = await supabase.from("reservations").select("*").eq("user_id", currentUser.id).eq("status", "active").gte("visit_date", tokyoDateString()).order("visit_date").order("start_time");
     if (error) setError(error.message); else setRows((data ?? []) as Reservation[]);
   }, [currentUser.id, supabase]);
 
@@ -30,26 +32,49 @@ export default function ReservationManager({ currentUser }: { currentUser: Profi
   }, [currentUser.id, load, supabase]);
 
   async function submit(e: FormEvent) {
-    e.preventDefault(); setBusy(true); setError(""); setMessage("");
-    const params = { p_visit_date: form.visit_date, p_start_time: form.start_time, p_end_time: form.end_time, p_note: form.note };
+    e.preventDefault();
+    setError(""); setMessage("");
+    if (editing && !form.reason.trim()) { setError("変更理由を入力してください。"); return; }
+    setBusy(true);
     const result = editing
-      ? await supabase.rpc("update_reservation", { p_id: editing, ...params })
-      : await supabase.rpc("create_reservation", params);
+      ? await supabase.rpc("update_reservation", {
+          p_id: editing,
+          p_visit_date: form.visit_date, p_start_time: form.start_time, p_end_time: form.end_time,
+          p_note: form.note, p_reason: form.reason,
+        })
+      : await supabase.rpc("create_reservation", {
+          p_visit_date: form.visit_date, p_start_time: form.start_time, p_end_time: form.end_time, p_note: form.note,
+        });
     if (result.error) setError(result.error.message);
     else { setMessage(editing ? "予約を更新しました。" : "予約を登録しました。"); setEditing(null); setForm(empty()); await load(); }
     setBusy(false);
   }
 
   function edit(r: Reservation) {
-    setEditing(r.id); setError(""); setMessage("");
-    setForm({ visit_date: r.visit_date, start_time: shortTime(r.start_time), end_time: shortTime(r.end_time), note: r.note });
+    setEditing(r.id); setError(""); setMessage(""); setCancelingId(null);
+    setForm({ visit_date: r.visit_date, start_time: shortTime(r.start_time), end_time: shortTime(r.end_time), note: r.note, reason: "" });
   }
 
-  async function remove(id: string) {
-    if (!window.confirm("この予約を削除しますか？")) return;
-    setError(""); setMessage("");
-    const { error } = await supabase.rpc("delete_reservation", { p_id: id });
-    if (error) setError(error.message); else { if (editing === id) { setEditing(null); setForm(empty()); } setMessage("予約を削除しました。"); await load(); }
+  function startCancel(id: string) {
+    setCancelingId(id); setCancelReason(""); setError(""); setMessage("");
+  }
+
+  function abortCancel() {
+    setCancelingId(null); setCancelReason("");
+  }
+
+  async function confirmCancel(id: string) {
+    if (!cancelReason.trim()) { setError("キャンセル理由を入力してください。"); return; }
+    setError(""); setMessage(""); setBusy(true);
+    const { error } = await supabase.rpc("cancel_reservation", { p_id: id, p_reason: cancelReason });
+    if (error) setError(error.message);
+    else {
+      if (editing === id) { setEditing(null); setForm(empty()); }
+      setCancelingId(null); setCancelReason("");
+      setMessage("予約をキャンセルしました。");
+      await load();
+    }
+    setBusy(false);
   }
 
   return (
@@ -61,18 +86,30 @@ export default function ReservationManager({ currentUser }: { currentUser: Profi
           <div className="field"><label>開始</label><input type="time" value={form.start_time} onChange={e => setForm({...form, start_time:e.target.value})} required /></div>
           <div className="field"><label>終了</label><input type="time" value={form.end_time} onChange={e => setForm({...form, end_time:e.target.value})} required /></div>
           <div className="field full"><label>メモ（500文字まで）</label><textarea maxLength={500} value={form.note} onChange={e => setForm({...form, note:e.target.value})} placeholder="訪問目的など" /></div>
+          {editing && <div className="field full"><label>変更理由（必須・500文字まで）</label><textarea maxLength={500} value={form.reason} onChange={e => setForm({...form, reason:e.target.value})} placeholder="変更理由を入力してください" required /></div>}
         </div>
         {error && <div className="error">{error}</div>}{message && <div className="success">{message}</div>}
         <div className="actions">
           <button className="btn btn-primary" disabled={busy}>{busy ? "処理中…" : editing ? "更新する" : "予約する"}</button>
-          {editing && <button type="button" className="btn" onClick={() => {setEditing(null); setForm(empty());}}>キャンセル</button>}
+          {editing && <button type="button" className="btn" onClick={() => {setEditing(null); setForm(empty());}}>編集をやめる</button>}
         </div>
       </form>
       <h2 style={{marginTop:24}}>自分の今後の予約</h2>
       {!rows.length ? <p className="muted">予約はありません。</p> : <div className="list">{rows.map(r => (
         <div className="row" key={r.id}>
           <div className="row-main"><div className="row-title">{r.visit_date}　{shortTime(r.start_time)}–{shortTime(r.end_time)}</div><div className="row-note">{r.note || "メモなし"}</div></div>
-          <div className="actions"><button className="btn" onClick={() => edit(r)}>編集</button><button className="btn btn-danger" onClick={() => remove(r.id)}>削除</button></div>
+          {cancelingId === r.id ? (
+            <div className="field full">
+              <label>キャンセル理由（必須・500文字まで）</label>
+              <textarea maxLength={500} value={cancelReason} onChange={e => setCancelReason(e.target.value)} placeholder="キャンセル理由を入力してください" autoFocus />
+              <div className="actions">
+                <button type="button" className="btn btn-danger" disabled={busy} onClick={() => confirmCancel(r.id)}>キャンセルを確定</button>
+                <button type="button" className="btn" disabled={busy} onClick={abortCancel}>戻る</button>
+              </div>
+            </div>
+          ) : (
+            <div className="actions"><button className="btn" onClick={() => edit(r)}>編集</button><button className="btn btn-danger" onClick={() => startCancel(r.id)}>キャンセル</button></div>
+          )}
         </div>
       ))}</div>}
     </section>

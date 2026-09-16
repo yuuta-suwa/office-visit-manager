@@ -22,15 +22,26 @@ export type EventItem = {
   ends_at: string;
   office_required: boolean;
   zoom_allowed: boolean;
+  venue_allowed: boolean;
+  venue_name: string;
   description: string;
 };
 
 export type EventResponse = {
   event_id: string;
-  participation_type: "office" | "zoom" | "absent";
+  participation_type: "office" | "venue" | "zoom" | "absent";
   planned_arrival: string | null;
   planned_departure: string | null;
   attendance_confirmed: boolean;
+};
+
+export type EventAttendanceRow = {
+  member_id: string;
+  full_name: string;
+  participation_type: "office" | "venue" | "zoom" | "absent" | null;
+  planned_arrival: string | null;
+  attendance_confirmed: boolean;
+  responded_at: string | null;
 };
 
 export type OfficeStatus = {
@@ -47,6 +58,7 @@ export type Reservation = {
   start_time: string;
   end_time: string;
   note: string;
+  status: "active" | "cancelled";
   created_at: string;
   updated_at: string;
 };

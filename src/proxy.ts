@@ -7,6 +7,11 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    // api/line/webhook must stay public: LINE's servers call it with no
+    // Supabase session cookie, so the auth gate below would otherwise
+    // redirect every webhook call to /login. Signature verification inside
+    // the route itself (verifyLineSignature) is what actually authenticates
+    // the caller for that one path.
+    "/((?!_next/static|_next/image|favicon.ico|api/line/webhook|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

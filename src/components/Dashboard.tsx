@@ -10,6 +10,7 @@ import ReservationManager from "./ReservationManager";
 import OpenCloseLogs from "./OpenCloseLogs";
 import UserManagement from "./UserManagement";
 import EventManager from "./EventManager";
+import ReservationHistoryAdmin from "./ReservationHistoryAdmin";
 
 export default function Dashboard({ currentUser, email }: { currentUser: Profile; email: string }) {
   const [section, setSection] = useState<"main" | "users">("main");
@@ -41,6 +42,9 @@ export default function Dashboard({ currentUser, email }: { currentUser: Profile
           <div className="col-8"><TodayVisitors /></div>
           <div className="col-6"><ReservationManager currentUser={currentUser} /></div>
           <div className="col-6"><OpenCloseLogs /></div>
+          {(currentUser.role === "admin" || currentUser.role === "key_manager") && (
+            <div className="col-6"><ReservationHistoryAdmin currentUser={currentUser} /></div>
+          )}
           <div className="col-12"><EventManager currentUser={currentUser} /></div>
         </div>
       )}
