@@ -33,7 +33,41 @@ function translateError(message: string) {
 async function reply(replyToken: string | undefined, text: string) {
   if (!replyToken) return;
   const result = await replyMessage(replyToken, [{ type: "text", text }]);
-  if (result.dryRun) console.log("[LINE dry-run] would reply:", text);
+  if (result.dryRun) {
+    console.log("[LINE dry-run] would reply:", text);
+  } else if (!result.ok) {
+    // The LINE API call itself failing was previously silent -- this was a
+    // real bug, not just missing telemetry: a bad channel access token or
+    // an expired/reused replyToken would look identical to success.
+    console.error("[LINE] reply failed", result.status, result.body);
+  }
+}
+
+async function handleMessage(service: ReturnType<typeof createServiceClient>, event: LineWebhookEvent, lineUserId: string) {
+  const { data: profile, error: profileError } = await service
+    .from("profiles")
+    .select("id,active")
+    .eq("line_user_id", lineUserId)
+    .maybeSingle();
+
+  if (profileError) {
+    console.error("[LINE] profile lookup failed (message)", profileError.message, profileError.code);
+  }
+
+  if (profile && profile.active) {
+    await reply(event.replyToken, "回答はイベント通知のボタンからお願いします。");
+    return;
+  }
+
+  // Not linked yet: surface the sender's own LINE user ID so an admin can
+  // set it on their profiles.line_user_id row. This is the only place a
+  // member can see their own ID; there is no other self-service way to
+  // find it, and it is not sensitive (it's meaningless without matching
+  // account access).
+  await reply(
+    event.replyToken,
+    `このLINEアカウントはまだ連携されていません。管理者に下記のLINEユーザーIDを伝えて連携してもらってください。\n\nLINEユーザーID:\n${lineUserId}`
+  );
 }
 
 async function handlePostback(service: ReturnType<typeof createServiceClient>, event: LineWebhookEvent, lineUserId: string) {
@@ -44,11 +78,15 @@ async function handlePostback(service: ReturnType<typeof createServiceClient>, e
   const type = params.get("type");
   if (!eventId || !isParticipationType(type)) return;
 
-  const { data: profile } = await service
+  const { data: profile, error: profileError } = await service
     .from("profiles")
     .select("id,active")
     .eq("line_user_id", lineUserId)
     .maybeSingle();
+
+  if (profileError) {
+    console.error("[LINE] profile lookup failed (postback)", profileError.message, profileError.code);
+  }
 
   if (!profile || !profile.active) {
     await reply(event.replyToken, "このLINEアカウントは連携されていないか、無効化されています。管理者に確認してください。");
@@ -105,7 +143,7 @@ export async function POST(req: Request) {
       if (event.type === "postback") {
         await handlePostback(service, event, lineUserId);
       } else if (event.type === "message" && event.message?.type === "text") {
-        await reply(event.replyToken, "回答はイベント通知のボタンからお願いします。");
+        await handleMessage(service, event, lineUserId);
       }
     } catch (err) {
       console.error("LINE webhook event handling failed", err);

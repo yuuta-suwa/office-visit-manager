@@ -286,3 +286,82 @@ Supabase URL/公開キー設定エラーは解消済み。通常dev起動はEMFI
 
 ### 6. 短い再開用プロンプト
 この引き継ぎ（「2026-09-14（続き5） 本番DB適用完了、production状態の解明」節）を読み継続してください。重要：**production の実際の状態は当初の記載と異なっていた**（005は既に適用済みだった等）。読取専用preflightで確認する習慣を続けてください。今回、A（004相当の必要部分）・006・007・008をすべて本番へ適用し、7関数の存在で最終確認済みです。当日名簿のエラーは解消しているはずです。LINE送信は`LINE_SEND_ENABLED`未設定のためまだドライランです。次はGit整理（大量の未コミット差分あり）、実デプロイでのLINE疎通確認、残機能（ユーザー管理拡張・鍵当番UI等）です。秘密情報を出力せず、値をチャットへ貼らせないでください。
+
+## 2026-09-15〜16 アプリ実機能確認・Git整理・Vercelデプロイ・LINE Webhook疎通確認
+
+### 1. アプリでの実機能確認（本番DB・実ログイン）
+ユーザーのChromeで実ログイン中のアプリ（`http://127.0.0.1:3003`、本番Supabase接続）にテストイベント「動作確認テスト」を作成し、一通り確認した：
+- 当日名簿が正常に開いた（以前のエラー解消を確認）
+- 会場参加での回答・保存・表示
+- 参加確認（⭕️、venue含む）
+- 社長報告文コピー（最新名簿を再取得してから生成することを確認）
+- 「LINEへ報告を送信」「LINEで通知」（ドライラン、未連携1件を正しくカウント）
+- 予約作成・キャンセル（理由必須）・予約変更履歴への反映
+すべて想定通り動作。テストイベントは削除機能が無いため残したまま（無害、実データではない）。
+
+### 2. Git整理・push
+5コミットに分けて整理し、`origin/feature/office-community-v2`へpush済み（`ec57bd4`〜`293099e`）。`AGENTS.md`/`CLAUDE.md`（Next.js dev自動生成）/`tsconfig.tsbuildinfo`はコミット対象外。`next-env.d.ts`のdev/buildパス差分は無関係なノイズなので`git checkout`で復元してから他をコミットした。
+
+### 3. Vercelプレビューデプロイ
+- `npx vercel login`→`npx vercel link`をユーザーが実行し、新規プロジェクト`gmpdcasp/office-visit-manager-github`を作成。
+- 環境変数（`NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`/`LINE_CHANNEL_SECRET`/`LINE_CHANNEL_ACCESS_TOKEN`/`SUPABASE_SERVICE_ROLE_KEY`）をVercelダッシュボード（Web UI、値は貼らせていない）でPreview+Production両方に設定。`SUPABASE_SERVICE_ROLE_KEY`はSupabaseの新形式`sb_secret_...`キーを使用（従来の`service_role` JWTと同じ役割）。`LINE_SEND_ENABLED`はまだ設定していない（実送信は引き続き無効）。
+- `npx vercel`（引数なし）を実行。**注意**：このプロジェクトの初回デプロイはVercelの仕様で自動的にProduction環境に割り当てられた（プレビューにはならなかった）。公開URL: `https://office-visit-manager-github.vercel.app`。ただしログイン必須のアプリであり、LEI STYLE本来の本番運用とは別のVercelプロジェクトなので実害は低いと判断。次回以降のデプロイはpreview扱いになる。
+
+### 4. LINE Webhook疎通確認（成功）
+- Claude in Chrome拡張でユーザーのブラウザに接続し、LINE Developers Console（`https://developers.line.biz/console/`）を操作。ログインのみユーザー本人が実施。
+- **重要な発見**：このLINEチャンネル「LEI STYLE オフィス出社管理」の既存Webhook URLは、`https://script.google.com/macros/s/...`（Google Apps Script）に設定されていた。ユーザー確認の結果「応答をスプレッドシートに書き込む機能だが、まだ空なので上書きしてよい」との回答を得てから、Vercel URL（`https://office-visit-manager-github.vercel.app/api/line/webhook`）に差し替えた。
+- LINE Developers Consoleの「検証」ボタンで疎通確認 →「成功」。実際のLINEサーバーからの署名付きリクエストに対し、Webhookが正しく200を返すことを確認済み。
+
+### 5. 現状・残件
+- Webhookの疎通（署名検証・200応答）は実証済み。ただし実際のpostback応答（ボタンタップ→DB書込み→返信）や、admin/key_managerからのpush送信（LINEで通知・LINEへ報告を送信）はまだ`LINE_SEND_ENABLED`が未設定のため未検証（実送信の有効化が必要）。
+- 実送信を試すには：(1) Vercel環境変数に`LINE_SEND_ENABLED=true`を追加、(2) ユーザー自身のLINEユーザーIDを`profiles.line_user_id`に設定（本番DB更新、要承認）、(3) 実際にLINEアプリからボットに応答してもらう、の3点が必要。まだ実施していない。
+- GASの旧Webhook（スプレッドシート書込み機能）は今回破棄した。空だったとの申告のみで実データ消失は無し。
+
+### 6. 短い再開用プロンプト
+この引き継ぎ（「2026-09-15〜16 アプリ実機能確認・Git整理・Vercelデプロイ・LINE Webhook疎通確認」節）を読み継続してください。本番DBでのアプリ機能確認（当日名簿・会場参加・予約キャンセル・LINE関連ドライラン）はすべて成功、Gitはpush済み、Vercelプレビュー（実際はProduction扱いになった別プロジェクト）にデプロイ済みでURLは`https://office-visit-manager-github.vercel.app`です。LINE Developers ConsoleのWebhook URLをこのVercel URLに差し替え、「検証」で成功を確認済みです（既存のGAS Webhookは「まだ空」とのユーザー確認を得て上書き済み）。実際のLINE送受信（`LINE_SEND_ENABLED`の有効化、line_user_idの設定、実機での応答テスト）はまだ行っていません。次に進める場合はユーザーに実送信の承認を得てから進めてください。秘密情報を出力せず、値をチャットへ貼らせないでください。
+
+## 2026-09-16 LINE実送信の有効化、service_role権限不備の発見・修正、実機往復テスト成功
+
+### 1. 経緯
+ユーザーから実送信を試すことに承認を得た（AskUserQuestionで確認、「はい、進めて」）。手順は前節の残件どおり：(1)`LINE_SEND_ENABLED=true`をVercelへ追加、(2)ユーザー自身の`line_user_id`を`profiles`へ設定（本番DB書込み、承認済み）、(3)実機のLINEアプリから応答。この3点を実施する過程で、当初想定していなかった環境不備（`service_role`のDB権限欠落）が2件見つかり、いずれもユーザー実行のSQLで修正した。
+
+### 2. 発生した問題と修正（時系列）
+1. **`vercel`（`--prod`無し）はProductionを更新しない**：reply()のエラーログ追加後に再デプロイしたが反映されず、`npx vercel logs <URL>`でそのデプロイへのアクセスが0件と判明。CLI自身の出力に「本番デプロイには `vercel --prod` を使ってください」と明記されていたのが原因。以降、本番反映が必要な操作は必ず`--prod`を付ける。
+2. **`401 Authentication failed`（LINE API呼び出し）**：Vercelに設定していた`LINE_CHANNEL_ACCESS_TOKEN`が無効化されていた。LINE Developers ConsoleでlongTermトークンを再発行し、Vercel環境変数を更新・`--prod`で再デプロイして解消。
+3. **`permission denied for table profiles`（42501）**：Webhookのservice_roleクライアントが`profiles`をSELECTすると権限エラー。原因調査のため`error`フィールドを握りつぶさずログ出力するよう[route.ts](src/app/api/line/webhook/route.ts)の`handleMessage`/`handlePostback`を修正（`profileError`を破棄せず`console.error`）——これで初めてエラーの実体が可視化された。`information_schema.role_table_grants`で確認した結果、**このSupabaseプロジェクトの`service_role`にはpublicスキーマの15テーブル全てに対し、SELECT/INSERT/UPDATE/DELETEのデフォルト権限が一切付与されていなかった**（プロジェクト作成時からの設定不備であり、今回のマイグレーション由来ではない。新形式`sb_secret_...`キーでも旧JWT `service_role`キーでも同一のエラーだったため、キー形式の問題ではないと確認済み）。ユーザー実行・承認済みで以下を適用：
+   ```sql
+   grant select, insert, update, delete on all tables in schema public to service_role;
+   grant usage, select on all sequences in schema public to service_role;
+   alter default privileges in schema public grant select, insert, update, delete on tables to service_role;
+   alter default privileges in schema public grant usage, select on sequences to service_role;
+   ```
+4. **`permission denied for function record_event_response_via_service`（42501）**：上記のテーブル権限修正後、「連携されていません」エラーは解消したが、新たに「回答を保存できませんでした」エラーが発生。`notification_logs.error`列を確認して判明（表示のためbase64化して仮想化グリッドの制約を回避）。原因は同根で、**関数のEXECUTE権限もservice_roleへ一切付与されていなかった**。ユーザー実行・承認済みで以下を適用：
+   ```sql
+   grant execute on all functions in schema public to service_role;
+   alter default privileges in schema public grant execute on functions to service_role;
+   ```
+
+### 3. 実機往復テスト成功
+上記修正後、ユーザーが実際にLINEアプリからテストイベント「テスト」へオフィス参加ボタンをタップ→LINEが「オフィス参加で回答を受け付けました。」と返信（実機スクリーンショットで確認）。DBを確認し、`event_responses`テーブルに`participation_type='office'`で正しく記録されていることを検証済み（`event_responses`と`profiles`/`events`をJOINしたread-onlyクエリで確認、個人データはこのクエリ結果として画面に一度表示したのみで保存はしていない）。これでWebhook受信→署名検証→DB書込み→LINE返信の全経路が実運用で動作することを確認した。
+なお同じ検証クエリで、以前のテストと思われる`venue`・`zoom`の応答記録も存在することを確認済み（今回のセッションで新たに送信したものではない可能性があり、venue/zoom/absentボタンの実機タップは今回改めて確認していない）。
+
+### 4. Vercel Git連携（push時自動デプロイ）
+ユーザーから「GitHubは自動で動かしたいから」との要望を受け、`npx vercel git connect`を実行——「既に連携済み」との応答だった。つまり`origin/feature/office-community-v2`へのpushで既にVercelの自動デプロイ（Preview環境）がトリガーされる設定になっている。ただし**Production環境への反映には別途`--prod`での明示デプロイ、またはVercel側でProduction Branchをこのブランチに設定する操作が必要**（今回は未設定・未確認）。
+
+### 5. 自動実行についての制約（今回明確化）
+ユーザーから「今度から自動でやってくれない？」（デプロイ操作を私が直接実行すること）と依頼されたが、環境のauto-mode classifierによりBashからの`npx vercel --prod`やブラウザ操作によるSQL直接実行は複数回ブロックされた（分類：「Production Deploy」「Modify Shared Resources」「Permission Grant」）。この制約は安全装置であり回避を試みていない。本番へ影響する操作（デプロイ・DB書込み・権限変更）は、正確なコマンド/SQLを提示し、引き続きユーザー自身に実行してもらう運用を続ける。
+
+### 6. 現状
+- LINE実送信は有効（`LINE_SEND_ENABLED=true`、Vercel Production）。ユーザー自身の`line_user_id`は`profiles`に設定済み。
+- `service_role`のテーブル権限・関数EXECUTE権限とも修正済み（今後のservice_roleクライアント利用でこの種のエラーは再発しないはず）。
+- Webhookからのoffice参加応答は実機で成功確認済み。venue/zoom/absentボタン、および管理者側「LINEで通知」「LINEへ報告を送信」からのpush送信の実機確認はまだ行っていない。
+- Vercelのgit連携は「連携済み」だがProduction Branchの設定は未確認（Previewのみ自動化されている可能性がある）。
+
+### 7. 残件
+- venue/zoom/absentボタン、および「LINEで通知」「LINEへ報告を送信」からのpush送信の実機確認。
+- VercelのProduction Branch設定確認（push→自動でProductionまで反映されるようにするか、現状の手動`--prod`運用を続けるか）。
+- ユーザー管理UIの拡張、鍵当番UI、通知先を選ぶUIは引き続き未着手。
+- iPhone実機（LINE以外のアプリ本体UI）確認は未実施。
+
+### 8. 短い再開用プロンプト
+この引き継ぎ（「2026-09-16 LINE実送信の有効化、service_role権限不備の発見・修正、実機往復テスト成功」節）を読み継続してください。LINE実送信は有効化済み、このSupabaseプロジェクトのservice_roleにテーブル権限・関数EXECUTE権限とも欠落していた不備を発見しユーザー実行のGRANT文で修正済みです（原因はプロジェクト設定の既存不備、今回のマイグレーション由来ではない）。修正後、実機でオフィス参加ボタン→LINE返信→DB記録の往復が成功しています。venue/zoom/absentボタンとpush通知（LINEで通知／LINEへ報告を送信）の実機確認はまだです。VercelのGit自動デプロイは連携済みですがProduction Branch設定は未確認です。本番へ影響する操作（デプロイ・DB変更・権限変更）は環境のauto-mode classifierにより私が直接実行できないため、正確なコマンド/SQLを提示してユーザーに実行してもらってください。秘密情報を出力せず、値をチャットへ貼らせないでください。
