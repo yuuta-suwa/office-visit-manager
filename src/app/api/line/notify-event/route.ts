@@ -1,11 +1,23 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { pushMessage } from "@/lib/line/client";
-import type { LineQuickReplyAction } from "@/lib/line/client";
+import type { LineFlexButton, LineMessage } from "@/lib/line/client";
 
-function action(eventId: string, type: string, label: string): LineQuickReplyAction {
+// LINE quick-reply pills cannot be colored or resized, so response buttons
+// use a Flex Message instead -- full-width, colored, and easy to tap.
+const BUTTON_COLOR = {
+  office: "#2563EB",
+  venue: "#D97706",
+  zoom: "#16A34A",
+} as const;
+
+function responseButton(eventId: string, type: "office" | "venue" | "zoom" | "absent", label: string): LineFlexButton {
+  const color = type === "absent" ? undefined : BUTTON_COLOR[type];
   return {
-    type: "action",
+    type: "button",
+    style: color ? "primary" : "secondary",
+    color,
+    height: "md",
     action: {
       type: "postback",
       label,
@@ -15,12 +27,32 @@ function action(eventId: string, type: string, label: string): LineQuickReplyAct
   };
 }
 
-function buildQuickReplyItems(eventRow: { id: string; office_required: boolean; zoom_allowed: boolean; venue_allowed: boolean }) {
-  const items: LineQuickReplyAction[] = [action(eventRow.id, "office", "オフィス")];
-  if (!eventRow.office_required && eventRow.venue_allowed) items.push(action(eventRow.id, "venue", "会場"));
-  if (!eventRow.office_required && eventRow.zoom_allowed) items.push(action(eventRow.id, "zoom", "Zoom"));
-  items.push(action(eventRow.id, "absent", "不参加"));
-  return items;
+function buildResponseMessage(
+  eventRow: { id: string; title: string; office_required: boolean; zoom_allowed: boolean; venue_allowed: boolean },
+  dateLabel: string
+): LineMessage {
+  const buttons: LineFlexButton[] = [responseButton(eventRow.id, "office", "オフィス参加")];
+  if (!eventRow.office_required && eventRow.venue_allowed) buttons.push(responseButton(eventRow.id, "venue", "会場参加"));
+  if (!eventRow.office_required && eventRow.zoom_allowed) buttons.push(responseButton(eventRow.id, "zoom", "Zoom参加"));
+  buttons.push(responseButton(eventRow.id, "absent", "不参加"));
+
+  return {
+    type: "flex",
+    altText: `『${eventRow.title}』（${dateLabel}）の参加回答をお願いします。`,
+    contents: {
+      type: "bubble",
+      body: {
+        type: "box",
+        layout: "vertical",
+        spacing: "md",
+        contents: [
+          { type: "text", text: eventRow.title, weight: "bold", size: "lg", wrap: true },
+          { type: "text", text: `${dateLabel}の参加方法を選んでください`, size: "sm", color: "#666666", wrap: true },
+          ...buttons,
+        ],
+      },
+    },
+  };
 }
 
 export async function POST(req: Request) {
@@ -29,8 +61,8 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: "認証が必要です。" }, { status: 401 });
 
   const { data: profile } = await supabase.from("profiles").select("id,role,active").eq("id", user.id).single();
-  if (!profile || !profile.active || profile.role !== "admin") {
-    return NextResponse.json({ error: "管理者権限が必要です。" }, { status: 403 });
+  if (!profile || !profile.active || (profile.role !== "admin" && profile.role !== "key_manager")) {
+    return NextResponse.json({ error: "管理者・鍵管理者権限が必要です。" }, { status: 403 });
   }
 
   const body = await req.json().catch(() => null);
@@ -51,14 +83,13 @@ export async function POST(req: Request) {
   const { data: targets, error: targetsError } = await supabase.rpc("event_notification_targets", { p_event_id: eventId });
   if (targetsError) return NextResponse.json({ error: targetsError.message }, { status: 400 });
 
-  const items = buildQuickReplyItems(eventRow);
   const dateLabel = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", month: "long", day: "numeric" }).format(new Date(eventRow.starts_at));
-  const text = `『${eventRow.title}』（${dateLabel}）の参加回答をお願いします。`;
+  const message = buildResponseMessage(eventRow, dateLabel);
 
   let sent = 0, skipped = 0, failed = 0;
   for (const target of targets ?? []) {
     if (!target.line_user_id) { skipped++; continue; }
-    const result = await pushMessage(target.line_user_id, [{ type: "text", text, quickReply: { items } }]);
+    const result = await pushMessage(target.line_user_id, [message]);
     const ok = result.dryRun || result.ok;
     if (ok) sent++; else failed++;
     await supabase.rpc("log_notification", {

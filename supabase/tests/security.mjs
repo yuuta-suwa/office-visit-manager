@@ -15,6 +15,7 @@ let v3=sql('005_venue_participation.sql');const enums3=v3.match(/^alter type pub
 await db.exec(sql('006_reservation_cancel_edit.sql'));
 await db.exec(sql('007_reservation_audit_visibility.sql'));
 await db.exec(sql('008_line_integration.sql'));
+await db.exec(sql('009_merge_admin_key_manager.sql'));
 const ids=Array.from({length:7},(_,i)=>`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`);
 for (let i=0;i<6;i++)await db.query(`insert into auth.users(id,email,raw_user_meta_data) values($1,$2,'{"role":"admin"}')`,[ids[i],`CODEX_TEST_${i}@example.invalid`]);
 assert.equal((await db.query('select role from profiles where id=$1',[ids[0]])).rows[0].role,'member');
@@ -31,7 +32,9 @@ for(const id of [ids[0],ids[4],ids[6],null]){
  await rejects(id,'select confirm_event_attendance($1,$2,true)',[event,ids[0]]);
  await rejects(id,`select create_event_with_members('CODEX_TEST_DENIED','other',now(),now()+interval '1 hour',false,true,'')`);
 }
-await rejects(ids[3],`select create_event_with_members('CODEX_TEST_DENIED','other',now(),now()+interval '1 hour',false,true,'')`);
+// 009_merge_admin_key_manager.sql: key_manager is now merged with admin for
+// event management, so this now succeeds instead of being rejected.
+await as(ids[3],async()=>{const r=(await db.query(`select create_event_with_members('CODEX_TEST_KEYMGR_CREATE','other',now(),now()+interval '1 hour',false,true,'') as id`)).rows[0];assert.ok(r.id);passed++;});
 await as(ids[0],async()=>{for(const [table,column] of [['reservations','user_id'],['event_members','member_id'],['event_responses','member_id']]){const rows=(await db.query(`select ${column} from ${table}`)).rows;assert.ok(rows.length);assert.ok(rows.every(r=>r[column]===ids[0]));passed++;}});
 for(const id of [ids[2],ids[3]])await as(id,async()=>{const roster=(await db.query('select * from event_attendance_admin($1)',[event])).rows;assert.equal(roster.length,3);assert.equal(roster.filter(r=>r.participation_type===null).length,1);passed++;await db.query('select confirm_event_attendance($1,$2,true)',[event,ids[0]]);const row=(await db.query('select * from event_responses where event_id=$1 and member_id=$2',[event,ids[0]])).rows[0];assert.equal(row.confirmed_by,id);assert.equal(row.attendance_confirmed,true);assert.equal(row.planned_arrival,'10:00:00');assert.ok(row.actual_joined_at);passed++;await db.query('select confirm_event_attendance($1,$2,false)',[event,ids[0]]);const undone=(await db.query('select * from event_responses where event_id=$1 and member_id=$2',[event,ids[0]])).rows[0];assert.equal(undone.attendance_confirmed,false);assert.equal(undone.confirmed_by,null);assert.equal(undone.actual_joined_at,null);passed++;});
 await rejects(ids[2],'select confirm_event_attendance($1,$2,true)',[event,ids[1]]);
@@ -116,4 +119,13 @@ for(const id of [ids[2],ids[3]])await as(id,async()=>{
   const logs=(await db.query('select * from notification_logs where event_id=$1 and member_id=$2',[event,ids[0]])).rows;
   assert.equal(logs.length,2);assert.ok(logs.every((l)=>l.sent_at));passed++;
 }
+// Merged admin/key_manager permissions (009_merge_admin_key_manager.sql)
+await rejects(ids[0],"select set_user_role($1,'key_manager')",[ids[1]]);
+await as(ids[3],async()=>{await db.query("select set_user_role($1,'key_manager')",[ids[1]]);assert.equal((await db.query('select role from profiles where id=$1',[ids[1]])).rows[0].role,'key_manager');passed++;await db.query("select set_user_role($1,'member')",[ids[1]]);assert.equal((await db.query('select role from profiles where id=$1',[ids[1]])).rows[0].role,'member');passed++;});
+await rejects(ids[3],"select set_user_role($1,'admin')",[ids[1]]);
+await rejects(ids[3],"select set_user_role($1,'member')",[ids[2]]);
+await as(ids[2],async()=>{await db.query("select set_user_role($1,'key_manager')",[ids[5]]);assert.equal((await db.query('select role from profiles where id=$1',[ids[5]])).rows[0].role,'key_manager');passed++;await db.query("select set_user_role($1,'member')",[ids[5]]);passed++;});
+await as(ids[3],async()=>{const rows=(await db.query('select id from profiles')).rows;assert.ok(rows.length>=6);passed++;});
+await as(ids[0],async()=>{const rows=(await db.query('select id from profiles')).rows;assert.equal(rows.length,1);assert.equal(rows[0].id,ids[0]);passed++;});
+
 console.log(`${passed} PostgreSQL/RLS/RPC assertions passed (local PGlite, synthetic data only).`);await db.close();

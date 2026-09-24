@@ -1,9 +1,9 @@
--- Read-only. Run in Supabase SQL Editor before approving 004/005/006/007/008. No personal rows queried.
+-- Read-only. Run in Supabase SQL Editor before approving 004/005/006/007/008/009. No personal rows queried.
 select p.oid::regprocedure::text as signature, pg_get_function_result(p.oid) as result,
        pg_get_functiondef(p.oid) as definition
 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
 where n.nspname='public' and p.proname in (
- 'current_role','is_admin','is_key_manager_or_admin','handle_new_user',
+ 'current_role','is_admin','is_key_manager_or_admin','handle_new_user','set_user_role',
  'event_attendance_admin','confirm_event_attendance','create_event_with_members','respond_to_event',
  'validate_reservation_window','create_reservation','update_reservation','delete_reservation','cancel_reservation',
  'record_event_response_via_service','event_notification_targets','event_report_recipients','log_notification'
@@ -32,7 +32,7 @@ select p.oid::regprocedure::text as signature, p.prosecdef as security_definer,
        has_function_privilege('anon',p.oid,'EXECUTE') as anon_execute,
        has_function_privilege('authenticated',p.oid,'EXECUTE') as authenticated_execute
 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
-where n.nspname='public' and p.proname in ('is_admin','is_key_manager_or_admin',
+where n.nspname='public' and p.proname in ('is_admin','is_key_manager_or_admin','set_user_role',
  'event_attendance_admin','confirm_event_attendance','create_event_with_members','respond_to_event',
  'update_reservation','delete_reservation','cancel_reservation',
  'record_event_response_via_service','event_notification_targets','event_report_recipients','log_notification');

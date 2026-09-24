@@ -15,7 +15,7 @@ import ReservationHistoryAdmin from "./ReservationHistoryAdmin";
 export default function Dashboard({ currentUser, email }: { currentUser: Profile; email: string }) {
   const [section, setSection] = useState<"main" | "users">("main");
   const router = useRouter();
-  const isAdmin = currentUser.role === "admin";
+  const canManageMembers = currentUser.role === "admin" || currentUser.role === "key_manager";
 
   async function signOut() {
     await createClient().auth.signOut();
@@ -29,13 +29,13 @@ export default function Dashboard({ currentUser, email }: { currentUser: Profile
         <div className="userbox">
           <span><strong>{currentUser.full_name}</strong> <span className="muted">{email}</span></span>
           <span className="badge">{currentUser.role === "admin" ? "管理者" : currentUser.role === "key_manager" ? "鍵管理者" : "メンバー"}</span>
-          {isAdmin && <button className="btn" onClick={() => setSection(section === "main" ? "users" : "main")}>{section === "main" ? "メンバー管理" : "ダッシュボード"}</button>}
+          {canManageMembers && <button className="btn" onClick={() => setSection(section === "main" ? "users" : "main")}>{section === "main" ? "メンバー管理" : "ダッシュボード"}</button>}
           <button className="btn" onClick={signOut}>ログアウト</button>
         </div>
       </header>
 
-      {section === "users" && isAdmin ? (
-        <UserManagement currentUserId={currentUser.id} />
+      {section === "users" && canManageMembers ? (
+        <UserManagement currentUser={currentUser} />
       ) : (
         <div className="grid">
           <div className="col-4"><OfficeStatusCard currentUser={currentUser} /></div>

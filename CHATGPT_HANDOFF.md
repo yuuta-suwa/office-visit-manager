@@ -386,3 +386,64 @@ Supabase URL/公開キー設定エラーは解消済み。通常dev起動はEMFI
 
 ### 4. 短い再開用プロンプト
 この引き継ぎ（「2026-09-18 push送信の残り項目を実機確認、リリース版として一通り実証完了」節）を読み継続してください。LINE自動応答（Zoom参加ボタン実機確認済み）、管理者からのpush送信2種（LINEで通知／LINEへ報告を送信、いずれも実機で実送信成功）を確認しました。会場・不参加ボタンの実機タップのみ未実施です（Zoomと同一コードパスのため動作は同等と判断可能）。コード変更・DB変更は今回行っていません。次に進める場合はユーザーの要望を確認してください（残件：ユーザー管理UI拡張、鍵当番UI、通知先選択UI、iPhone実機でのアプリ本体UI確認、会場・不参加ボタンの実機確認）。秘密情報を出力せず、値をチャットへ貼らせないでください。
+
+## 2026-09-21 管理者・鍵管理者の権限統合（実装済み・本番未適用）
+
+### 1. ユーザー依頼と解釈
+ユーザー依頼：「管理者と鍵管理者を一緒にして」「メンバーと鍵管理者の切り替えができるようにして」。曖昧さがあったため以下のように解釈して実装した（要修正なら次回セッションで軌道修正が必要）：
+- 「一緒にして」＝ 権限面でadminとkey_managerを同格にする。これまでadmin限定だったイベント作成・「LINEで通知」push・メンバー一覧閲覧（メンバー管理画面）をkey_managerにも開放。
+- 「切り替え」＝ これまで完全にadmin限定だった「メンバー管理」画面をkey_managerにも開放し、key_managerが他のメンバーをmember⟷key_managerで切り替えられる新機能を追加。
+- 単一本番admin保護のガバナンスルールを踏まえ、**adminロールの付与・剥奪と、既存adminアカウントの変更は引き続きadmin限定**とした（key_managerは自分や他人をadminにできない、adminのロールも一切変更できない）。これにより「唯一の本番adminを降格させない」というルールを技術的にも担保している。
+
+### 2. 今回の変更ファイルと理由
+- 追加 `supabase/009_merge_admin_key_manager.sql`（本番未適用、要承認）：
+  - `create_event_with_members`：`is_admin()`チェックを`is_key_manager_or_admin()`に変更（引数シグネチャ不変のためCREATE OR REPLACEで安全に差し替え）。
+  - `profiles`のSELECT RLSポリシー：`profiles_select_self_or_admin`（`id=auth.uid() or is_admin()`）を`profiles_select_self_or_manager`（`id=auth.uid() or is_key_manager_or_admin()`）に置き換え。これによりkey_managerもメンバー一覧（イベント参加者選択・メンバー管理画面）を取得できるようになる。
+  - `set_user_role`：呼び出し可能者を`is_admin()`から`is_key_manager_or_admin()`に拡張しつつ、admin以外（＝key_manager）の呼び出しには制限を追加——`p_role='admin'`を指定できない（admin付与不可）、対象ユーザーの現在ロールが`admin`の場合は変更できない（既存admin改変不可）。admin呼び出し時の挙動（最後の1人のadminを守るガード含む）は変更なし。
+- `src/components/EventManager.tsx`：`canManage`（イベント作成フォーム・メンバー一覧取得・「LINEで通知」ボタンを制御）をadmin限定からadmin/key_manager両方に変更。
+- `src/app/api/line/notify-event/route.ts`：admin限定の403チェックをadmin/key_manager両方に変更（アプリ側の`canManage`と整合させるため、サーバー側でも許可しないとボタンを押しても403になる）。
+- `src/components/Dashboard.tsx`：`isAdmin`を`canManageMembers`（admin/key_manager）に置き換え、「メンバー管理」ボタンとUserManagement画面の表示条件をadmin限定からadmin/key_manager両方に変更。`UserManagement`へのprops渡しを`currentUserId`から`currentUser`（role判定に必要）に変更。
+- `src/components/UserManagement.tsx`：閲覧者がadminなら従来通りmember/key_manager/adminの3択セレクトボックス（変更なし）。閲覧者がkey_managerの場合：adminの行は「変更不可」と表示し操作不可、それ以外の行はmember⟷key_managerを切り替えるボタン（トグル）を表示する新UIを追加。
+- `supabase/tests/security.mjs`：009を読み込み追加。key_managerによるイベント作成が成功するよう既存の拒否テストを成功系に変更。新規テスト：member拒否/key_managerによるmember⟷key_manager切替成功/key_managerのadmin付与拒否/key_managerによる既存admin変更拒否/admin側の従来動作維持（回帰確認）/key_managerがprofiles全件を読めること/memberは自分の行しか読めないこと。合計76件成功（従来67件＋新規9件、うち1件は挙動変更に伴う書き換え）。
+- `supabase/tests/attendance_preflight.sql`、`supabase/tests/README.md`：009分の関数（`set_user_role`）・件数（76件）を追加更新。
+
+### 3. テストと結果
+- npx tsc --noEmit: 成功。npm run build: 成功（Next.js 16.3.4）。
+- PGliteローカル: 76件成功（`npm install --prefix /tmp/office-visit-db-tests ... @electric-sql/pglite` で一時インストールして実行、READMEの手順どおり）。
+- 実ログインでのUI確認（key_managerアカウントでのメンバー管理画面・切替ボタン・イベント作成）は未実施。
+
+### 4. DB適用状況
+- 009は本番未適用、承認待ち。009より前の004〜008は前々節（2026-09-14続き5）で既に本番適用済み。
+
+### 5. 残件・要確認
+- ユーザーに解釈（上記1節）が意図通りか確認が必要。特に「adminロール自体の付与・変更は引き続きadmin限定」という制限を残した点は、ユーザーが「完全に同格にしたい（key_managerもadminを付与できるようにしたい）」という意図だった場合は追加変更が必要。
+- 009の本番適用承認。
+- 承認後、実ログイン（できればkey_managerアカウントを用意して）でメンバー管理画面の新トグルボタン、イベント作成、「LINEで通知」ボタンをkey_manager権限で確認。
+- iPhone実機でのアプリ本体UI確認は別途ユーザー側で実施依頼中（未回答）。
+
+### 6. 短い再開用プロンプト
+この引き継ぎ（「2026-09-21 管理者・鍵管理者の権限統合（実装済み・本番未適用）」節）を読み継続してください。admin/key_managerの権限統合（イベント管理・メンバー一覧閲覧・LINEで通知をkey_managerにも開放し、メンバー管理画面でkey_managerがmember⟷key_managerを切り替えられるようにした）はDB(009_merge_admin_key_manager.sql)・EventManager.tsx・Dashboard.tsx・UserManagement.tsx・notify-event/route.ts・ローカルテスト(76件成功)まで実装済み、本番未適用です。設計判断（adminロール自体の付与・変更はadmin限定のまま維持）がユーザーの意図と合っているか確認してください。次はユーザー承認後の009本番適用と、実ログインでの動作確認です。秘密情報を出力せず、本番DB変更は承認まで行わないでください。
+
+## 2026-09-24 009本番適用、および副次的に発見した重大な権限漏れの修正
+
+### 1. 009の本番適用
+ユーザー承認（「実行して」）を得て、009_merge_admin_key_manager.sqlをユーザー自身がSupabase SQL Editorで実行（「サクセスしてるよ」と報告）。読み取り専用クエリで反映を確認：
+- `create_event_with_members`・`set_user_role`とも関数が存在し、シグネチャも想定通り。
+- `profiles`テーブルのSELECTポリシーが`profiles_select_self_or_manager`に置き換わっていることを確認。
+
+### 2. 副次的に発見した重大な問題：profilesの全件読み取り可能な古いポリシーが残存していた
+009の確認作業中、`profiles`テーブルに想定外の**もう1つのポリシー`profiles_select_authenticated`（`USING (true)`）が並存**していることを発見した。PostgreSQLのRLSは複数の許可ポリシーをORで評価するため、この1つが残っているだけで、**一般memberを含む全認証済みユーザーが他人の氏名・ロール・チーム・所属・line_user_idなどprofilesの全行を読み取れる状態**になっていた（002マイグレーションはこのポリシーをdropしてから作り直す内容だったが、本番では何らかの理由でdropが効いておらず、残存していた。原因は特定できていない——schema.sqlが002適用後に再実行された可能性が高いと推測するが未確認）。これは最初からの要件「一般memberは他人の個人情報を取得できない」に反する、以前から存在していた設定漏れであり、今回の009適用そのものが原因ではない。
+ユーザーに発見内容と修正SQL（`drop policy if exists "profiles_select_authenticated" on public.profiles;`）を提示し、承認（「実行して」）を得た。ブラウザ自動操作での直接実行はauto-mode classifierに「[Modify Shared Resources]」としてブロックされたため（Bash等の別ツールでの回避も意図的に行わなかった）、ユーザー自身がSQL Editorで実行（「サクセスしてるよ」）。読み取り専用クエリで確認した結果、`profiles`のSELECTポリシーは`profiles_select_self_or_manager`のみとなり、古いポリシーは完全に削除されたことを確認した。
+
+### 3. 現在の状態
+- 009本番適用：完了・確認済み。
+- profilesの権限漏れ：修正・確認済み。
+- コード側（EventManager.tsx等）の変更は前節（2026-09-21）時点で完了済み、今回はDB側の適用と検証のみ。
+
+### 4. 残件
+- key_managerアカウントでの実ログイン確認（メンバー管理画面の新トグルボタン、イベント作成、「LINEで通知」ボタン）はまだ未実施。
+- 「profiles_select_authenticated」がなぜ残っていたか（誰が・いつschema.sqlを再実行したか等）の原因究明はしていない。今後同様の「本番が想定と乖離している」ケースに備え、大きな変更の前は今回のように実際のpg_policies/pg_procを都度確認する習慣を継続する。
+- iPhone実機でのアプリ本体UI確認は引き続き未回答。
+
+### 5. 短い再開用プロンプト
+この引き継ぎ（「2026-09-24 009本番適用、および副次的に発見した重大な権限漏れの修正」節）を読み継続してください。009（admin/key_manager権限統合）は本番適用・確認済みです。適用作業中に、profilesテーブルに`USING (true)`の古いポリシーが残存し一般memberも他人の個人情報を全件読めてしまう重大な設定漏れを発見し、ユーザー承認の上で削除・修正済みです（原因は未特定、002のdropが本番で効いていなかった模様）。次はkey_managerアカウントでの実ログイン確認です。秘密情報を出力せず、本番DB変更は個別の承認を得るまで行わないでください。

@@ -39,7 +39,9 @@ export default function EventManager({
 }) {
   const supabase = createClient();
 
-  const canManage = currentUser.role === "admin";
+  const canManage =
+    currentUser.role === "admin" ||
+    currentUser.role === "key_manager";
 
   const canConfirm =
     currentUser.role === "admin" ||
