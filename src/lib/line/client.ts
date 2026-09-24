@@ -27,11 +27,67 @@ export type LineQuickReplyAction = {
   action: { type: "postback"; label: string; data: string; displayText: string };
 };
 
-export type LineMessage = {
+export type LineTextMessage = {
   type: "text";
   text: string;
   quickReply?: { items: LineQuickReplyAction[] };
 };
+
+// A colored, full-width button -- unlike quick replies, Flex Message
+// buttons support custom color/size, which is the only way to make a LINE
+// reply button visually prominent instead of a small quick-reply pill.
+export type LineFlexButton = {
+  type: "button";
+  style: "primary" | "secondary";
+  color?: string;
+  height?: "sm" | "md";
+  action: { type: "postback"; label: string; data: string; displayText: string };
+};
+
+export type LineFlexText = {
+  type: "text";
+  text: string;
+  weight?: "regular" | "bold";
+  size?: string;
+  color?: string;
+  wrap?: boolean;
+};
+
+export type LineFlexMessage = {
+  type: "flex";
+  altText: string;
+  contents: {
+    type: "bubble";
+    body: {
+      type: "box";
+      layout: "vertical";
+      spacing?: string;
+      contents: (LineFlexText | LineFlexButton)[];
+    };
+  };
+};
+
+// LINE's native time picker: opens the platform time UI and returns the
+// chosen value as postback.params.time ("HH:mm") on submit.
+export type LineDatetimePickerMessage = {
+  type: "template";
+  altText: string;
+  template: {
+    type: "buttons";
+    text: string;
+    actions: [
+      {
+        type: "datetimepicker";
+        label: string;
+        data: string;
+        mode: "time";
+        initial?: string;
+      },
+    ];
+  };
+};
+
+export type LineMessage = LineTextMessage | LineFlexMessage | LineDatetimePickerMessage;
 
 export type LineSendResult = { dryRun: true } | { dryRun: false; ok: boolean; status: number; body: string };
 
