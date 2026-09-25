@@ -447,3 +447,49 @@ Supabase URL/公開キー設定エラーは解消済み。通常dev起動はEMFI
 
 ### 5. 短い再開用プロンプト
 この引き継ぎ（「2026-09-24 009本番適用、および副次的に発見した重大な権限漏れの修正」節）を読み継続してください。009（admin/key_manager権限統合）は本番適用・確認済みです。適用作業中に、profilesテーブルに`USING (true)`の古いポリシーが残存し一般memberも他人の個人情報を全件読めてしまう重大な設定漏れを発見し、ユーザー承認の上で削除・修正済みです（原因は未特定、002のdropが本番で効いていなかった模様）。次はkey_managerアカウントでの実ログイン確認です。秘密情報を出力せず、本番DB変更は個別の承認を得るまで行わないでください。
+
+## 2026-09-24〜25 開場不能バグの根本原因調査・修正、LINE UX改善（色付きボタン・到着時刻ピッカー）
+
+### 1. LINE UX改善（コードのみ、本番デプロイは`vercel --prod`待ち）
+ユーザーから「LINEの回答ボタンをもっと目立つ色・大きいものにしたい」「LINEでの参加時間の回答も必要」という要望を受け実装：
+- LINEのクイックリプライ（色・サイズ変更不可の仕様制約あり）から**Flex Message**（カスタムレイアウト機能）へ変更。オフィス＝青、会場＝オレンジ、Zoom＝緑、不参加＝グレーの色分けボタンに。
+- 「オフィス参加」ボタンをタップすると即記録せず、**LINEネイティブの時刻ピッカー**（`datetimepicker` action, mode: time）で出社予定時刻を選んでもらい、選択後に`record_event_response_via_service`へ実際の時刻を渡して記録する2段階フローに変更。会場・Zoom・不参加は従来通り即時記録（元々時刻を扱っていないため）。参加確認済みでなければ再タップで時刻を選び直し可能（変更に対応済み）。
+- DB変更は不要（`record_event_response_via_service`は元々任意の時刻を受け付ける設計）。変更ファイル：`src/lib/line/client.ts`（Flex/Template型追加）、`src/app/api/line/webhook/route.ts`（2段階フロー）、`src/app/api/line/notify-event/route.ts`（Flex Message生成）。
+- npx tsc --noEmit・npm run build・ローカルPGliteテスト（76件、DB変更なしのため件数不変）すべて成功。コミット・push済み（`69591c8`, `6be3d61`）。**本番デプロイ未実施**（`vercel --prod`はauto-mode classifierにブロックされ、ユーザーの`vercel login`がトークン切れで失敗した状態のまま中断）。
+- 追加で確認した既存機能：管理者は既に「社長報告文をコピー」ボタンで氏名・参加種別・到着時刻を含むテキストをコピーしLINE等に貼り付け可能。「LINEへ報告を送信」ボタンでコピペ不要の自動push送信も既存。アプリ（Web）側にはメンバーが到着時刻を直接入力する欄が無く、LINEとの非対称が残っている（要望があれば追加実装が必要、今回は未着手）。
+
+### 2. 開場不能バグの根本原因（重大）
+ユーザーから「管理者なのに開場できない、鍵管理者にもなれない」と報告。調査の結果、**本番DBが002マイグレーションの内容と部分的に乖離していた**ことが判明：
+- `is_master()`関数（`set_office_state`＝開場・閉場RPCの権限チェックに使用）が、002適用前の**schema.sql時代の古い定義**（`role = 'master'`）のままだった。現行ロール体系に`'master'`は存在しないため、admin/key_managerを含め**誰も開場・閉場できない状態**だった。
+- 002が本来`drop`するはずだった`profiles_select_authenticated`（前回セッションで発見・削除済み）に加え、**`reservations_select_authenticated`・`office_status_select_authenticated`・`logs_select_authenticated`の3ポリシーも本番に残存**（`USING (true)`＝全認証済みユーザーが全件読める状態）。特に`reservations`は他人の来社予約（日時・メモ）が全メンバーに見える状態で、profilesと同種の重大な情報漏れだった。
+- 原因（推定、未確定）：002マイグレーションの「古いポリシーをdrop→新しいポリシーをcreate」ブロックが、本番適用時に手動コピペか何かで部分的にスキップされた可能性が高い。`handle_new_user`・`update_reservation`・`validate_reservation_window`など002以降の他の変更は正しく反映されていたため、「schema.sqlが丸ごと再実行された」わけではなく、**特定の文だけが漏れた**と考えられる。
+
+### 3. 修正内容（`supabase/010_fix_legacy_policy_drift.sql`、本番適用・確認済み）
+1回目の承認・実行：
+- `is_master(p_user_id)`を`role in ('key_manager','admin')`判定に修正（ユーザー要望「管理者＝鍵管理者」を反映）。
+- 上記4つの旧`_select_authenticated`ポリシー（`USING (true)`）をすべて`drop`。
+
+**重要な副作用**：上記dropを実行した直後、`reservations`・`office_status`・`open_close_logs`の3テーブルに**SELECTポリシーが1つも無い状態**になっていたことが判明（002の「create」側もそもそも本番に存在していなかった）。RLSのデフォルト拒否により、開場ボタンが「Cannot coerce the result to a single JSON object」エラーで失敗し、予約一覧等も読めなくなる一時的な機能停止を引き起こした。ユーザーに状況を説明し、2回目の承認・実行で以下を追加：
+```sql
+create policy "reservations_select_by_role" on public.reservations for select to authenticated
+  using (user_id = auth.uid() or public.is_key_manager_or_admin());
+create policy "office_status_active_member" on public.office_status for select to authenticated
+  using (public.is_active_member());
+create policy "logs_key_manager_or_admin" on public.open_close_logs for select to authenticated
+  using (public.is_key_manager_or_admin());
+```
+実行後、読み取り専用クエリで4ポリシーのdropと3ポリシーのcreateすべてを確認。実際にアプリで「開場する」を操作し、`office_status.is_open=true`・`updated_by`が実行者ID・開場・閉場ログへの記録まで実機で確認済み。
+
+### 4. 教訓
+- 002のような「複数箇所でdrop+create」を含むマイグレーションが「確認済み」とされていても、**個々の文単位で本番の実際の状態を照合する**必要がある（関数単位の比較だけでは、同じファイル内の他の文が漏れている可能性を見逃す）。
+- 「古いポリシーをdropする」修正を承認・実行する前に、**その代わりとなる新しいポリシーが本当に存在するか**も同時に確認すべきだった。今回はdrop後に無ポリシー状態に気づき、追加修正で対応したが、事前に確認していれば一時的な機能停止は避けられた。
+- 004・005・006・007・008・009・010を含め、本番の`is_master`同様の「一部だけ古い定義が残っている」パターンが他にもまだ潜んでいる可能性はゼロではない。以後、権限まわりの不具合報告があった際は、関連する全ての関数定義とテーブルのポリシー一覧（`pg_policies`で`select 1`件も無いテーブルがないか含めて）を都度読み取り専用で照合する。
+
+### 5. 残件
+- LINE UX改善（色付きボタン・時刻ピッカー）の本番デプロイ（`vercel --prod`、ユーザーのVercel再ログインが必要）。
+- Vercel「Production Branch」設定（git pushだけで自動本番反映されるようにする案）は未設定のまま。
+- アプリ（Web）側で到着時刻を直接入力できるようにする件は要望として保留中（ユーザーの意向待ち）。
+- key_managerアカウントでの実ログイン確認（009由来の残件）はまだ未実施。
+
+### 6. 短い再開用プロンプト
+この引き継ぎ（「2026-09-24〜25 開場不能バグの根本原因調査・修正、LINE UX改善」節）を読み継続してください。開場不能バグは`is_master()`の旧定義（本番drift）が原因と判明し修正済み、あわせて`reservations`・`office_status`・`open_close_logs`の重大な権限漏れも発見・修正済みです（`supabase/010_fix_legacy_policy_drift.sql`、本番適用・実機確認済み）。修正の過程で一時的にこの3テーブルが誰も読めない状態になる副作用が発生しましたが、追加のCREATE POLICYで即座に復旧・確認済みです。LINEの回答ボタンをFlex Messageの色付きボタン化＋到着時刻ピッカー化するコード変更も完了・コミット済みですが、**本番デプロイはまだです**（Vercelのログインが切れているため、ユーザーに`vercel login`→`vercel --prod`の実行を依頼してください）。次はLINE UX改善のデプロイと実機確認、その後key_managerアカウントでの実ログイン確認です。秘密情報を出力せず、本番DB変更は個別の承認を得るまで行わないでください。
