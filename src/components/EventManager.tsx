@@ -20,6 +20,16 @@ import type {
 
 type AttendanceRow = EventAttendanceRow;
 
+function defaultArrival(event: EventItem, response?: EventResponse) {
+  if (response?.planned_arrival) return shortTime(response.planned_arrival);
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Tokyo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(event.starts_at));
+}
+
 const blank = () => ({
   title: "",
   date: "",
@@ -75,6 +85,7 @@ export default function EventManager({
   const [message, setMessage] = useState("");
   const [reportFallback, setReportFallback] = useState<string | null>(null);
   const [lineBusy, setLineBusy] = useState(false);
+  const [officeArrivalDraft, setOfficeArrivalDraft] = useState<Record<string, string>>({});
 
   const eventById = useMemo(
     () =>
@@ -180,34 +191,19 @@ export default function EventManager({
 
   async function respond(
     event: EventItem,
-    type: EventResponse["participation_type"]
+    type: EventResponse["participation_type"],
+    arrivalOverride?: string
   ) {
     setError("");
     setMessage("");
 
-    const previous =
-      responses[event.id];
-
     const arrival =
       type === "office"
-        ? previous?.planned_arrival
-          ? shortTime(
-              previous.planned_arrival
-            )
-          : new Intl.DateTimeFormat(
-              "en-GB",
-              {
-                timeZone:
-                  "Asia/Tokyo",
-                hour: "2-digit",
-                minute: "2-digit",
-                hourCycle: "h23",
-              }
-            ).format(
-              new Date(
-                event.starts_at
-              )
-            )
+        ? (arrivalOverride ??
+          defaultArrival(
+            event,
+            responses[event.id]
+          ))
         : null;
 
     const { error } =
@@ -855,6 +851,31 @@ export default function EventManager({
                       </button>
                     )}
 
+                    <input
+                      type="time"
+                      className="time-input"
+                      aria-label="出社予定時刻"
+                      value={
+                        officeArrivalDraft[
+                          event.id
+                        ] ??
+                        defaultArrival(
+                          event,
+                          response
+                        )
+                      }
+                      onChange={(e) =>
+                        setOfficeArrivalDraft(
+                          (prev) => ({
+                            ...prev,
+                            [event.id]:
+                              e.target
+                                .value,
+                          })
+                        )
+                      }
+                    />
+
                     <button
                       type="button"
                       className={
@@ -866,7 +887,14 @@ export default function EventManager({
                       onClick={() =>
                         respond(
                           event,
-                          "office"
+                          "office",
+                          officeArrivalDraft[
+                            event.id
+                          ] ??
+                            defaultArrival(
+                              event,
+                              response
+                            )
                         )
                       }
                     >

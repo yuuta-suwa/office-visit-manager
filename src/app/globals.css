@@ -44,6 +44,7 @@ button { cursor: pointer; }
 .btn { border: 0; border-radius: 10px; padding: 10px 14px; font-weight: 700; background: #edf1f7; color: var(--text); }
 .btn:hover { filter: brightness(.97); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
+.time-input { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: white; color: var(--text); font-weight: 700; }
 .btn-primary { background: var(--primary); color: white; }
 .btn-primary:hover { background: var(--primary-dark); }
 .btn-danger { background: #fff0ef; color: var(--danger); }
@@ -242,6 +243,13 @@ th { color: var(--muted); font-size: 12px; text-transform: none; }
 
   .row > .actions .btn:first-child:nth-last-child(4) {
     grid-column: 1 / -1;
+  }
+
+  .row > .actions .time-input {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 48px;
+    font-size: 14px;
   }
 
   .attendance-panel {
