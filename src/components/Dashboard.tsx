@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/lib/types";
 import OfficeStatusCard from "./OfficeStatusCard";
 import TodayVisitors from "./TodayVisitors";
+import OfficeCalendar from "./OfficeCalendar";
 import ReservationManager from "./ReservationManager";
 import OpenCloseLogs from "./OpenCloseLogs";
 import UserManagement from "./UserManagement";
@@ -40,6 +41,7 @@ export default function Dashboard({ currentUser, email }: { currentUser: Profile
         <div className="grid">
           <div className="col-4"><OfficeStatusCard currentUser={currentUser} /></div>
           <div className="col-8"><TodayVisitors /></div>
+          <div className="col-12"><OfficeCalendar /></div>
           <div className="col-6"><ReservationManager currentUser={currentUser} /></div>
           <div className="col-6"><OpenCloseLogs /></div>
           {(currentUser.role === "admin" || currentUser.role === "key_manager") && (

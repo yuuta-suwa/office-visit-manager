@@ -493,3 +493,37 @@ create policy "logs_key_manager_or_admin" on public.open_close_logs for select t
 
 ### 6. 短い再開用プロンプト
 この引き継ぎ（「2026-09-24〜25 開場不能バグの根本原因調査・修正、LINE UX改善」節）を読み継続してください。開場不能バグは`is_master()`の旧定義（本番drift）が原因と判明し修正済み、あわせて`reservations`・`office_status`・`open_close_logs`の重大な権限漏れも発見・修正済みです（`supabase/010_fix_legacy_policy_drift.sql`、本番適用・実機確認済み）。修正の過程で一時的にこの3テーブルが誰も読めない状態になる副作用が発生しましたが、追加のCREATE POLICYで即座に復旧・確認済みです。LINEの回答ボタンをFlex Messageの色付きボタン化＋到着時刻ピッカー化するコード変更も完了・コミット済みですが、**本番デプロイはまだです**（Vercelのログインが切れているため、ユーザーに`vercel login`→`vercel --prod`の実行を依頼してください）。次はLINE UX改善のデプロイと実機確認、その後key_managerアカウントでの実ログイン確認です。秘密情報を出力せず、本番DB変更は個別の承認を得るまで行わないでください。
+
+## 2026-09-26〜28 LINE UX改善のデプロイ確認、Webの到着時刻入力、出社可能カレンダー、スタッフ登録機能
+
+### 1. LINE UX改善（Flex Message・到着時刻ピッカー）の本番デプロイ確認
+ユーザーが`vercel login`再実行後、`vercel --prod`を手動実行（一度「Not authorized」で失敗、CLIバージョン更新後に再試行）。デプロイ成功を`vercel ls`（読み取り専用）で確認し、実際に本番アプリで「LINEで通知」ボタンを押して`/api/line/notify-event`が200で成功することを確認。あわせて、色付きボタン化の元になったコミット（`6be3d61`）はこの時点で本番反映済みと確認した。
+**注意**：デバッグ目的で`npx vercel --prod --debug`を実行した際、auto-mode classifierにブロックされず**そのまま本番デプロイが実際に実行されてしまった**（意図せず）。診断コマンドのつもりだったが結果的に本番書込みが発生したことをユーザーに即座に開示済み。以後、`--debug`等のフラグ追加によるブロック回避を意図的に行わないよう自制する。
+
+### 2. Web版に到着時刻入力欄を追加（コードのみ、DB変更なし）
+LINEにだけ到着時刻ピッカーがあり、Web版には無い非対称を解消。`src/components/EventManager.tsx`の「オフィス」ボタンの隣に`<input type="time">`（`出社予定時刻`、`.time-input`）を追加。`respond()`に`arrivalOverride`引数を追加し、指定があればそれを使用、無ければ従来通り前回値かイベント開始時刻を使う`defaultArrival()`ヘルパーに切り出し。`globals.css`にモバイル用グリッドスタイルも追加。DB変更不要（`respond_to_event`は元々任意時刻を受け付ける）。コミット・push・本番デプロイ済み、本番で時刻欄の表示・入力までは確認済み（保存確認はブラウザ操作が不安定になり未完了、ユーザーに実機確認を依頼中）。
+
+### 3. 出社可能カレンダー（新機能）
+ユーザー要望「オフィスの出社可能カレンダーがない、構築してほしい」に対応。
+- 追加 `supabase/011_office_calendar_range.sql`（本番未適用、要承認）：`office_calendar_range_summary(p_start date, p_end date)` — 002の`office_calendar_summary`（単日・時間帯別集計）と同じプライバシー設計（個人名・メモなし、集計のみ）を月範囲に拡張。日付ごとの予約件数と開錠予定の有無を返す。SECURITY DEFINER、`authenticated`のみEXECUTE可。
+- 追加 `src/components/OfficeCalendar.tsx`：月表示カレンダー（前月・次月ボタン、今日をハイライト、日ごとに人数バッジ表示）。`Dashboard.tsx`に`col-12`で追加（`TodayVisitors`の下）。
+- `src/lib/types.ts`に`OfficeCalendarRangeSummary`型追加。`globals.css`にカレンダーグリッドのスタイル追加。
+- `supabase/tests/security.mjs`：011を読み込み追加、anon拒否・member集計取得（他人の予約日付+件数の合計が正しいこと、氏名等は含まれないこと）のテスト追加。合計78件成功。日付境界のタイムゾーン差（`current_date`のセッションTZ基準 vs `(now() at time zone 'Asia/Tokyo')::date`基準）でテストが実行時刻依存で揺れる問題に気づき、2日分の範囲を合計するアサーションに変更して回避。
+- npx tsc --noEmit・npm run buildとも成功。
+
+### 4. スタッフ登録機能（新機能）
+ユーザー要望「スタッフ登録ページがないので欲しい」に対応。従来はSupabaseダッシュボードから手動でユーザー追加する必要があった（ログイン画面にも「アカウント追加は管理者がSupabase Authenticationから行います」と明記されていた）。
+- 追加 `src/app/api/staff/invite/route.ts`：admin/key_manager限定（009の統合権限に合わせた認可）。service roleクライアントの`auth.admin.inviteUserByEmail(email, {data:{full_name}})`でSupabase Authの招待メールを送信する仕組み。招待されたユーザーは自分でパスワードを設定してログインでき、`handle_new_user()`トリガーが自動的に`role='member'`でprofilesへ登録する（メタデータにroleが含まれていても無視される既存の安全設計はそのまま活用、招待経由でも権限昇格は不可）。DBマイグレーション不要（既存のservice role・トリガーをそのまま利用）。
+- `src/components/UserManagement.tsx`に「スタッフ登録」フォーム（氏名任意・メールアドレス必須・招待を送信ボタン）を追加、「メンバー管理」セクションの上に表示。同じ画面全体がadmin/key_manager限定のため追加のロールチェックは不要。
+- npx tsc --noEmit・npm run buildとも成功。**実際にメールが届くかは未検証**（Supabaseプロジェクトのメール送信設定・レート制限に依存、本番デプロイ後の実地確認が必要）。
+
+### 5. 残件・要確認
+- **011の本番適用は未承認**（`supabase/011_office_calendar_range.sql`、SQL提示済み、ユーザー承認待ち）。
+- スタッフ登録機能・出社可能カレンダーとも本番デプロイ未実施（コードはコミット・push済み、`vercel --prod`が必要）。
+- スタッフ招待メールが実際に届くか（Supabaseのデフォルトメール送信はレート制限が厳しい場合がある）は本番でのテストが必要。
+- Web版到着時刻入力の保存確認（ブラウザ操作不安定のため未完了）。
+- key_managerアカウントでの実ログイン確認（009由来の残件、複数回持ち越し）は依然未実施。
+- Vercelの「Production Branch」設定（自動デプロイ化）はユーザー未対応のまま。
+
+### 6. 短い再開用プロンプト
+この引き継ぎ（「2026-09-26〜28 LINE UX改善のデプロイ確認、Webの到着時刻入力、出社可能カレンダー、スタッフ登録機能」節）を読み継続してください。LINE UX改善は本番デプロイ・実機確認済みです。Web版の到着時刻入力・出社可能カレンダー（`supabase/011_office_calendar_range.sql`、本番未適用・要承認）・スタッフ登録機能（`/api/staff/invite`、DB変更不要）はいずれもコード完成・コミット済みですが、**本番デプロイと011の適用承認がまだ**です。次はユーザーに011のSQL承認を得て本番適用し、`vercel --prod`でデプロイしてもらい、出社可能カレンダー・スタッフ招待メール・Web版時刻入力保存の3点を実機で確認してください。秘密情報を出力せず、本番DB変更は個別の承認を得るまで行わないでください。

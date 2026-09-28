@@ -16,6 +16,7 @@ await db.exec(sql('006_reservation_cancel_edit.sql'));
 await db.exec(sql('007_reservation_audit_visibility.sql'));
 await db.exec(sql('008_line_integration.sql'));
 await db.exec(sql('009_merge_admin_key_manager.sql'));
+await db.exec(sql('011_office_calendar_range.sql'));
 const ids=Array.from({length:7},(_,i)=>`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`);
 for (let i=0;i<6;i++)await db.query(`insert into auth.users(id,email,raw_user_meta_data) values($1,$2,'{"role":"admin"}')`,[ids[i],`CODEX_TEST_${i}@example.invalid`]);
 assert.equal((await db.query('select role from profiles where id=$1',[ids[0]])).rows[0].role,'member');
@@ -127,5 +128,18 @@ await rejects(ids[3],"select set_user_role($1,'member')",[ids[2]]);
 await as(ids[2],async()=>{await db.query("select set_user_role($1,'key_manager')",[ids[5]]);assert.equal((await db.query('select role from profiles where id=$1',[ids[5]])).rows[0].role,'key_manager');passed++;await db.query("select set_user_role($1,'member')",[ids[5]]);passed++;});
 await as(ids[3],async()=>{const rows=(await db.query('select id from profiles')).rows;assert.ok(rows.length>=6);passed++;});
 await as(ids[0],async()=>{const rows=(await db.query('select id from profiles')).rows;assert.equal(rows.length,1);assert.equal(rows[0].id,ids[0]);passed++;});
+
+// Month-range office calendar (011_office_calendar_range.sql)
+await db.exec('set role anon');await assert.rejects(db.query("select * from office_calendar_range_summary(current_date,current_date+interval '1 month')"));await db.exec('reset role');passed++;
+await as(ids[0],async()=>{
+  // Range spans current_date and current_date+1: reservations were created
+  // against both current_date (session/UTC) and (now() at Asia/Tokyo)::date,
+  // which land on different calendar days depending on wall-clock time when
+  // this suite runs -- summing over both avoids a time-of-day-flaky assertion.
+  const rows=(await db.query("select visit_date,planned_count from office_calendar_range_summary(current_date,current_date+1)")).rows;
+  const total=rows.reduce((sum,r)=>sum+Number(r.planned_count),0);
+  assert.equal(total,4);
+  passed++;
+});
 
 console.log(`${passed} PostgreSQL/RLS/RPC assertions passed (local PGlite, synthetic data only).`);await db.close();

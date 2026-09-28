@@ -15,6 +15,12 @@ export type OfficeCalendarSummary = {
   has_unlock: boolean;
 };
 
+export type OfficeCalendarRangeSummary = {
+  visit_date: string;
+  planned_count: number;
+  has_unlock: boolean;
+};
+
 export type EventItem = {
   id: string;
   title: string;
