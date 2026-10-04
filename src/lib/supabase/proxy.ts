@@ -32,8 +32,11 @@ export async function updateSession(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser();
   const isLogin = request.nextUrl.pathname.startsWith("/login");
+  // Invite and password-reset links land here before any session cookie
+  // exists (the page itself turns the link's tokens into a session).
+  const isSetPassword = request.nextUrl.pathname.startsWith("/auth/set-password");
 
-  if (!user && !isLogin) {
+  if (!user && !isLogin && !isSetPassword) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);

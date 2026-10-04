@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseConfigError } from "@/lib/supabase/config";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
@@ -33,6 +34,30 @@ export default function LoginPage() {
     }
   }
 
+  async function sendReset() {
+    if (configError) return;
+    if (!email) {
+      setMessage("メールアドレスを入力してから押してください。");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      // Implicit flow on purpose: the emailed link then works even when it is
+      // opened on a different device or browser than the one that asked for it.
+      const { error } = await createSupabaseClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+        { auth: { flowType: "implicit", persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }
+      ).auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/auth/set-password` });
+      setMessage(error ? error.message : "登録済みのアドレスであれば、パスワード設定用のメールを送信しました。");
+    } catch {
+      setMessage("接続できませんでした。接続設定とネットワークを確認してください。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <main className="login-page">
       <section className="card login-card">
@@ -51,7 +76,12 @@ export default function LoginPage() {
           {message && <div className="error">{message}</div>}
           <button className="btn btn-primary" disabled={busy || !!configError}>{busy ? "認証中…" : "ログイン"}</button>
         </form>
-        <p className="muted" style={{marginTop:16}}>アカウント追加は管理者がSupabase Authenticationから行います。公開サインアップは使用しません。</p>
+        <p className="muted" style={{marginTop:16}}>
+          アカウントは管理者からの招待メールで作成されます。公開サインアップは使用しません。
+          パスワードを忘れた場合や初期設定がまだの場合は、上にメールアドレスを入力して
+          <button type="button" className="link-btn" onClick={sendReset} disabled={busy || !!configError}>パスワード設定メールを送る</button>
+          を押してください。
+        </p>
       </section>
     </main>
   );

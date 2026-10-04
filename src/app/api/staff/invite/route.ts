@@ -26,8 +26,13 @@ export async function POST(req: Request) {
   // always assigns role='member' regardless of any metadata sent here --
   // an invited staff member is never created as key_manager/admin.
   const service = createServiceClient();
+  // The link in the email must come back to this app's set-password page,
+  // not whatever Site URL the Supabase project happens to be configured
+  // with. The URL also has to be on the project's Redirect URLs allowlist,
+  // otherwise Supabase silently falls back to the Site URL.
   const { error } = await service.auth.admin.inviteUserByEmail(email, {
     data: fullName ? { full_name: fullName } : undefined,
+    redirectTo: `${new URL(req.url).origin}/auth/set-password`,
   });
 
   if (error) {

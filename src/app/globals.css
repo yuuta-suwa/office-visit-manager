@@ -44,6 +44,8 @@ button { cursor: pointer; }
 .btn { border: 0; border-radius: 10px; padding: 10px 14px; font-weight: 700; background: #edf1f7; color: var(--text); }
 .btn:hover { filter: brightness(.97); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
+.link-btn { border: 0; background: none; padding: 0 2px; color: var(--primary); font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.link-btn:disabled { opacity: .5; cursor: not-allowed; }
 .time-input { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: white; color: var(--text); font-weight: 700; }
 .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 12px; }
 .calendar-weekday { text-align: center; font-size: 12px; font-weight: 700; color: var(--muted, #6b7280); padding: 4px 0; }
