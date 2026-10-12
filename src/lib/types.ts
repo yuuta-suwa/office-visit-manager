@@ -15,6 +15,13 @@ export type OfficeCalendarSummary = {
   has_unlock: boolean;
 };
 
+export type LineRegistrationRequest = {
+  id: string;
+  full_name: string;
+  email: string;
+  created_at: string;
+};
+
 export type OfficeCalendarRangeSummary = {
   visit_date: string;
   planned_count: number;

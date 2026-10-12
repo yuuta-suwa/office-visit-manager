@@ -1,4 +1,4 @@
--- Read-only. Run in Supabase SQL Editor before approving 004/005/006/007/008/009/010/011. No personal rows queried.
+-- Read-only. Run in Supabase SQL Editor before approving 004/005/006/007/008/009/010/011/012. No personal rows queried.
 select p.oid::regprocedure::text as signature, pg_get_function_result(p.oid) as result,
        pg_get_functiondef(p.oid) as definition
 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
@@ -10,7 +10,7 @@ where n.nspname='public' and p.proname in (
  'office_calendar_summary','office_calendar_range_summary'
 ) order by p.proname;
 select tablename, policyname, roles, cmd, qual, with_check from pg_policies
-where schemaname='public' and tablename in ('profiles','reservations','events','event_members','event_responses','reservation_audit_logs','notification_logs','event_notification_members','report_recipients','office_status','open_close_logs');
+where schemaname='public' and tablename in ('profiles','reservations','events','event_members','event_responses','reservation_audit_logs','notification_logs','event_notification_members','report_recipients','office_status','open_close_logs','line_registration_requests');
 select table_name, column_name, data_type from information_schema.columns
 where table_schema='public' and table_name in ('profiles','event_responses','events','reservations','reservation_audit_logs','notification_logs')
 order by table_name, ordinal_position;

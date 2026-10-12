@@ -17,6 +17,7 @@ await db.exec(sql('007_reservation_audit_visibility.sql'));
 await db.exec(sql('008_line_integration.sql'));
 await db.exec(sql('009_merge_admin_key_manager.sql'));
 await db.exec(sql('011_office_calendar_range.sql'));
+await db.exec(sql('012_line_registration_requests.sql'));
 const ids=Array.from({length:7},(_,i)=>`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`);
 for (let i=0;i<6;i++)await db.query(`insert into auth.users(id,email,raw_user_meta_data) values($1,$2,'{"role":"admin"}')`,[ids[i],`CODEX_TEST_${i}@example.invalid`]);
 assert.equal((await db.query('select role from profiles where id=$1',[ids[0]])).rows[0].role,'member');
@@ -141,5 +142,15 @@ await as(ids[0],async()=>{
   assert.equal(total,4);
   passed++;
 });
+
+// LINE registration requests (012_line_registration_requests.sql)
+// Default connection stands in for the service role (the webhook inserts).
+await db.query("insert into line_registration_requests(line_user_id,full_name,email) values('CODEX_TEST_LINE_REG','CODEX_TEST_NAME','codex_test@example.invalid')");
+await db.exec('set role anon');await assert.rejects(db.query('select * from line_registration_requests'));await db.exec('reset role');passed++;
+await as(ids[0],async()=>{const rows=(await db.query('select * from line_registration_requests')).rows;assert.equal(rows.length,0);passed++;});
+for(const id of [ids[2],ids[3]])await as(id,async()=>{const rows=(await db.query('select email from line_registration_requests')).rows;assert.equal(rows.length,1);passed++;});
+await rejects(ids[3],"insert into line_registration_requests(line_user_id,full_name,email) values('CODEX_TEST_FORGED','x','x@example.invalid')");
+await rejects(ids[2],"update line_registration_requests set status='approved'");
+await rejects(ids[0],"delete from line_registration_requests");
 
 console.log(`${passed} PostgreSQL/RLS/RPC assertions passed (local PGlite, synthetic data only).`);await db.close();

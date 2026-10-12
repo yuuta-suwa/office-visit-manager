@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { Profile, UserRole } from "@/lib/types";
+import type { LineRegistrationRequest, Profile, UserRole } from "@/lib/types";
 
 export default function UserManagement({ currentUser }: { currentUser: Profile }) {
   const supabase = createClient();
@@ -15,10 +15,20 @@ export default function UserManagement({ currentUser }: { currentUser: Profile }
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteError, setInviteError] = useState("");
   const [inviteMessage, setInviteMessage] = useState("");
+  const [requests, setRequests] = useState<LineRegistrationRequest[]>([]);
+  const [requestBusy, setRequestBusy] = useState<string | null>(null);
+  const [requestError, setRequestError] = useState("");
+  const [requestMessage, setRequestMessage] = useState("");
 
   const load = useCallback(async () => {
     const { data, error } = await supabase.from("profiles").select("id,full_name,role").order("full_name");
     if (error) setError(error.message); else setUsers((data ?? []) as Profile[]);
+    const { data: pending } = await supabase
+      .from("line_registration_requests")
+      .select("id,full_name,email,created_at")
+      .eq("status", "pending")
+      .order("created_at");
+    setRequests((pending ?? []) as LineRegistrationRequest[]);
   }, [supabase]);
 
   useEffect(() => { load(); }, [load]);
@@ -50,6 +60,33 @@ export default function UserManagement({ currentUser }: { currentUser: Profile }
     }
   }
 
+  async function decideRequest(request: LineRegistrationRequest, action: "approve" | "reject") {
+    if (action === "reject" && !window.confirm(`${request.full_name} さんの登録申請を却下します。よろしいですか？`)) return;
+    setRequestError(""); setRequestMessage(""); setRequestBusy(request.id);
+    try {
+      const res = await fetch("/api/staff/line-request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: request.id, action }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRequestError(body.error ?? "処理に失敗しました。");
+      } else {
+        setRequestMessage(
+          action === "approve"
+            ? `${request.full_name} さんを承認し、${request.email} に招待メールを送信しました。`
+            : `${request.full_name} さんの申請を却下しました。`
+        );
+      }
+      await load();
+    } catch {
+      setRequestError("接続できませんでした。");
+    } finally {
+      setRequestBusy(null);
+    }
+  }
+
   async function inviteStaff(e: FormEvent) {
     e.preventDefault();
     setInviteError(""); setInviteMessage(""); setInviteBusy(true);
@@ -76,6 +113,20 @@ export default function UserManagement({ currentUser }: { currentUser: Profile }
 
   const adminCount = users.filter(u => u.role === "admin").length;
   return <>
+  <section className="card">
+    <div className="section-head"><h2>LINE登録申請</h2><span className="badge">承認待ち {requests.length}件</span></div>
+    <p className="muted">LINEで「登録 氏名 メールアドレス」と送られた申請です。承認すると招待メールが送信され、LINEの通知・回答も使えるようになります。</p>
+    {requestError && <div className="error">{requestError}</div>}{requestMessage && <div className="success">{requestMessage}</div>}
+    {!requests.length ? <p className="muted">承認待ちの申請はありません。</p> : <div className="list">{requests.map(r => (
+      <div className="row" key={r.id}>
+        <div className="row-main"><div className="row-title">{r.full_name}</div><div className="row-note">{r.email}</div></div>
+        <div className="actions">
+          <button type="button" className="btn btn-primary" disabled={requestBusy !== null} onClick={() => decideRequest(r, "approve")}>承認</button>
+          <button type="button" className="btn" disabled={requestBusy !== null} onClick={() => decideRequest(r, "reject")}>却下</button>
+        </div>
+      </div>
+    ))}</div>}
+  </section>
   <section className="card">
     <div className="section-head"><h2>スタッフ登録</h2></div>
     <p className="muted">メールアドレスを入力すると、招待メールが送信されます。招待先が自分でパスワードを設定してログインすると、自動的に「メンバー」として登録されます。</p>

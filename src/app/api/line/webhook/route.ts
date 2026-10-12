@@ -77,6 +77,24 @@ function buildArrivalTimePickerMessage(eventId: string, initial: string): LineMe
   };
 }
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const REGISTRATION_HELP =
+  "このLINEはまだ登録されていません。\n登録するには、次の形式で送信してください。\n\n登録 氏名 メールアドレス\n（例）登録 山田太郎 yamada@example.com\n\n管理者の承認後、利用できるようになります。";
+
+// "登録 氏名 メールアドレス" (half- or full-width spaces); the email may
+// appear anywhere after the keyword, everything else is the name.
+function parseRegistration(text: string): { name: string; email: string } | "no-keyword" | "bad-format" {
+  const match = text.trim().slice(0, 500).match(/^登録[\s　]+(.+)$/);
+  if (!match) return "no-keyword";
+  const tokens = match[1].trim().split(/[\s　]+/);
+  const emailIndex = tokens.findIndex((t) => EMAIL_PATTERN.test(t));
+  if (emailIndex === -1) return "bad-format";
+  const name = tokens.filter((_, i) => i !== emailIndex).join(" ").trim().slice(0, 100);
+  if (!name) return "bad-format";
+  return { name, email: tokens[emailIndex].toLowerCase().slice(0, 254) };
+}
+
 async function handleMessage(service: ReturnType<typeof createServiceClient>, event: LineWebhookEvent, lineUserId: string) {
   const { data: profile, error: profileError } = await service
     .from("profiles")
@@ -92,16 +110,51 @@ async function handleMessage(service: ReturnType<typeof createServiceClient>, ev
     await reply(event.replyToken, "回答はイベント通知のボタンからお願いします。");
     return;
   }
+  if (profile && !profile.active) {
+    await reply(event.replyToken, "アカウントが無効です。管理者に確認してください。");
+    return;
+  }
 
-  // Not linked yet: surface the sender's own LINE user ID so an admin can
-  // set it on their profiles.line_user_id row. This is the only place a
-  // member can see their own ID; there is no other self-service way to
-  // find it, and it is not sensitive (it's meaningless without matching
-  // account access).
-  await reply(
-    event.replyToken,
-    `このLINEアカウントはまだ連携されていません。管理者に下記のLINEユーザーIDを伝えて連携してもらってください。\n\nLINEユーザーID:\n${lineUserId}`
+  // Not linked yet: this is where a new person registers themselves.
+  const parsed = parseRegistration(event.message?.text ?? "");
+  if (parsed === "no-keyword") {
+    await reply(event.replyToken, REGISTRATION_HELP);
+    return;
+  }
+  if (parsed === "bad-format") {
+    await reply(event.replyToken, `氏名とメールアドレスを確認してください。\n\n${REGISTRATION_HELP}`);
+    return;
+  }
+
+  const { data: existing } = await service
+    .from("line_registration_requests")
+    .select("status")
+    .eq("line_user_id", lineUserId)
+    .maybeSingle();
+  if (existing?.status === "pending") {
+    await reply(event.replyToken, "すでに登録申請済みです。管理者の承認をお待ちください。");
+    return;
+  }
+
+  const { error: requestError } = await service.from("line_registration_requests").upsert(
+    {
+      line_user_id: lineUserId,
+      full_name: parsed.name,
+      email: parsed.email,
+      status: "pending",
+      created_at: new Date().toISOString(),
+      decided_by: null,
+      decided_at: null,
+    },
+    { onConflict: "line_user_id" }
   );
+  if (requestError) {
+    console.error("[LINE] registration request failed", requestError.message, requestError.code);
+    await reply(event.replyToken, "登録申請を保存できませんでした。管理者に確認してください。");
+    return;
+  }
+
+  await reply(event.replyToken, `「${parsed.name}」さんの登録申請を受け付けました。管理者の承認後、LINEでお知らせします。`);
 }
 
 async function recordResponse(
@@ -221,6 +274,18 @@ export async function POST(req: Request) {
         await handlePostback(service, event, lineUserId);
       } else if (event.type === "message" && event.message?.type === "text") {
         await handleMessage(service, event, lineUserId);
+      } else if (event.type === "follow") {
+        // Friend-add greeting. An already-linked member re-adding the bot
+        // must not be told they are unregistered.
+        const { data: linked } = await service
+          .from("profiles")
+          .select("id,active")
+          .eq("line_user_id", lineUserId)
+          .maybeSingle();
+        await reply(
+          event.replyToken,
+          linked?.active ? "友だち追加ありがとうございます。イベントの通知・回答はこのLINEから行えます。" : REGISTRATION_HELP
+        );
       }
     } catch (err) {
       console.error("LINE webhook event handling failed", err);

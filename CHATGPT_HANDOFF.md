@@ -554,3 +554,26 @@ Authentication → URL Configuration で
 
 ### 5. 短い再開用プロンプト
 この引き継ぎ（「2026-10-04 スタッフ招待メールから登録に進めない問題の修正」節）を読み継続してください。招待メール→パスワード設定の導線（`/auth/set-password`、ログイン画面のパスワード再設定）をコードで追加済みですが、Supabaseの**Site URLがlocalhostのまま**で、Redirect URLsにも本番URLが未登録のため、ユーザーのダッシュボード設定変更が済むまで通し動作しません。設定後に、招待→メール→パスワード設定→ログインを一緒に確認してください。秘密情報を出力せず、本番DB変更は個別の承認を得るまで行わないでください。
+
+## 2026-10-12 Supabase自動停止の発生、LINEからのスタッフ登録申請（簡易版）
+
+### 1. Supabase無料プランの自動停止
+「アプリが開けない」報告。Vercel側は正常（/login 200）、`eqjoppokaaukedashlev.supabase.co`が**NXDOMAIN**（無料プランの1週間無アクセスによる自動pause。最終アクセス10/4から8日）。ダッシュボードのRestore projectでユーザーが復元（復元直後はHTTP 502、起動待ち）。データは保持される。再発防止は毎日運用か、定期アクセス（keep-alive）かPro化。**未対応**。
+
+### 2. LINEからのスタッフ登録申請（要望：「LINEでスタッフ登録、簡潔なもので」）
+- 方針：未連携のLINEから `登録 氏名 メールアドレス` を送る→申請として保存→管理者/鍵管理者がアプリで承認→既存の招待メールを送信＋`profiles.line_user_id`を自動連携。メールが必須なのはWebログインのAuthアカウントがメール必須で、`profiles.id`が`auth.users`を参照するため（LINE専用の疑似メールは、GoTrueのMX検証で拒否される恐れがあり不採用）。
+- 追加 `supabase/012_line_registration_requests.sql`（**本番未適用・要承認**）：`line_registration_requests`（line_user_id unique、氏名、メール、status pending/approved/rejected）。RLSはkey_manager/adminのSELECTのみ。書込みはservice roleのみ（アプリ側にINSERT/UPDATE/DELETE権限なし）。
+- `webhook/route.ts`：未連携ユーザーの文字メッセージを解析（半角/全角スペース可、メールは任意位置）。形式が違えば案内文を返信。申請済み(pending)の再送は重複させない。却下済みの再申請は可。従来の「LINEユーザーIDを返信する」挙動は廃止（承認がアプリ内で完結するため不要）。無効化済みアカウントには専用文言。友だち追加(follow)時に案内を自動送信（連携済みの人には案内しない）。
+- 追加 `api/staff/line-request/route.ts`：admin/key_manager限定。承認＝LINE IDが他プロファイルに連携済みでないか先に確認→`inviteUserByEmail`（redirectTo=/auth/set-password）→`profiles.line_user_id`更新→申請をapproved→本人へLINE通知。却下＝rejectedにして本人へLINE通知。
+- `UserManagement.tsx`：「LINE登録申請」カード（承認待ち一覧、承認/却下）を最上部に追加。
+- 制約：メールが既に登録済みのアカウント（既存メンバーのLINE連携）は承認時に「登録済み」エラーになる。既存メンバーのLINE連携は従来どおり`profiles.line_user_id`の直接設定が必要（未実装）。
+- tsc・build成功、ローカルPGlite 85件成功（012のRLS: anon拒否／memberは0件／manager・adminは閲覧可／アプリロールのINSERT・UPDATE・DELETE拒否）。attendance_preflight.sql・tests/README.md更新済み。
+
+### 3. 残件
+- 012の本番適用承認と、Supabase復元完了の確認（現時点でHTTP 502）。
+- Supabase Site URLは依然localhost（Redirect URLsには本番URL登録済みなので動作はする）。
+- パスワード設定メール（admin自身のアドレス宛）の動作確認は復元後。
+- keep-alive/Pro化の方針、既存メンバーのLINE連携UI、key_manager実ログイン確認。
+
+### 4. 短い再開用プロンプト
+この引き継ぎ（「2026-10-12 Supabase自動停止の発生、LINEからのスタッフ登録申請（簡易版）」節）を読み継続してください。Supabaseは自動停止から復元操作済みで、起動完了（auth health 200）を確認してください。LINEからの登録申請（`登録 氏名 メールアドレス`→アプリで承認→招待メール＋LINE連携）はコード完成・テスト済みですが、`supabase/012_line_registration_requests.sql`が本番未適用・要承認で、デプロイもまだです。012のSQLを提示して承認を得て適用し、デプロイ後にLINEから実際に申請→承認の通しを確認してください。秘密情報を出力せず、本番DB変更は個別の承認を得るまで行わないでください。
